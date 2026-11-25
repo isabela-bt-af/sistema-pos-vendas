@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bontempo | Gestão Integrada de Pós-vendas</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{--ink:#242424;--muted:#777;--line:#e5e3df;--paper:#f7f6f3;--accent:#6d5a83;--soft:#f2eef6}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px Arial,sans-serif}
+header{background:#242424;color:#fff;padding:18px 26px;display:flex;justify-content:space-between;align-items:center}
+.brand{font-size:18px;letter-spacing:2px}.brand small{display:block;font-size:10px;letter-spacing:1.5px;color:#ccc;margin-top:5px}
+button{cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:7px;padding:10px 14px;color:var(--ink)}button.primary{background:#292929;color:#fff;border-color:#292929}
+input,select{width:100%;padding:11px;border:1px solid var(--line);border-radius:7px;background:#fff;font-size:14px}
+label{display:grid;gap:6px;font-size:12px;color:var(--muted)}main{max-width:none;width:100%;margin:22px auto;padding:0 24px}
+.panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:16px}
+h1{font-size:24px;margin:0 0 6px}h2{font-size:17px;margin:0 0 14px}.muted{color:var(--muted);font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}.tab.active{background:#292929;color:#fff}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:12px 8px;border-bottom:1px solid var(--line);vertical-align:middle}th{color:var(--muted);font-weight:500}
+.hidden{display:none!important}.error{color:#a12d2d;margin-top:10px;font-size:13px}
+.client-name{display:block;width:100%;text-align:left;text-transform:capitalize;font-weight:500;color:var(--ink);text-decoration:underline;text-decoration-color:#bbb;text-underline-offset:3px;cursor:pointer;background:none;border:0;padding:0;font:inherit}
+.row-actions{display:flex;gap:6px;white-space:nowrap}
+.owner-badge{display:inline-block;padding:5px 9px;border-radius:16px;font-size:12px;font-weight:600;white-space:nowrap}
+.owner-gabriele{background:#eee6f5;color:#654b7d;border:1px solid #dfd1ec}
+.owner-vitoria{background:#e5f0fb;color:#285d91;border:1px solid #cbdff3}
+.trello-link{color:#315f91;text-decoration:underline;text-underline-offset:2px;font-size:12px;white-space:nowrap}
+.stage-badge{display:inline-block;padding:5px 9px;border-radius:14px;font-size:12px;font-weight:600;white-space:nowrap}
+.stage-comercial{background:#f8e5eb;color:#9b526a}.stage-engenharia{background:#eee6f5;color:#654b7d}
+.stage-posvendas{background:#fff4cc;color:#806817}.stage-montagem{background:#e5f0fb;color:#285d91}
+.stage-finalizacao{background:#ededed;color:#555}
+textarea{width:100%;min-height:84px;padding:11px;border:1px solid var(--line);border-radius:7px;background:#fff;font:14px Arial,sans-serif;resize:vertical}
+input[type=checkbox]{width:auto;transform:scale(1.15);margin-right:8px}
+.check-label{display:flex;align-items:center;gap:7px;padding:10px 0}
+.modal-backdrop{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;padding:16px;z-index:50}
+.modal{background:#fff;border-radius:12px;padding:22px;width:min(620px,100%);max-height:90vh;overflow:auto;box-shadow:0 12px 40px #0003}
+.modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.modal-head h2{margin:0}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}.row-actions button{padding:7px 9px;font-size:12px}.danger{color:#a12d2d;border-color:#e7caca}.detail-row td{background:#fcfbfd;padding:18px}.timeline-title{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:16px}
+.timeline{display:grid;gap:0}.stage{display:grid;grid-template-columns:28px minmax(0,1fr);gap:12px;position:relative;padding-bottom:18px}
+.stage:not(:last-child):before{content:"";position:absolute;left:10px;top:20px;bottom:0;width:2px;background:#e2dce9}
+.stage-marker{width:22px;height:22px;border-radius:50%;background:#eee;border:2px solid #cfc8d7;z-index:1}
+.stage.calculated .stage-marker{background:#e9e1f0;border-color:var(--accent)}
+.stage-content{border:1px solid var(--line);border-radius:9px;padding:12px;background:#fff}
+.stage-head{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}.stage-name{font-weight:700}
+.status{font-size:11px;border-radius:20px;padding:5px 9px;background:#f0eeee;color:#555}.status.ok{background:#eee8f4;color:#5d4773}
+.stage-meta{display:flex;gap:18px;flex-wrap:wrap;margin-top:9px;font-size:12px;color:var(--muted)}
+.pdf-list{display:grid;gap:6px;margin-top:10px}.pdf-link{color:#5d4773;font-size:12px;text-decoration:underline;overflow-wrap:anywhere}
+.next-date{margin:0 0 14px;padding:11px 13px;border-radius:8px;background:var(--soft);font-size:13px}
+.empty{padding:14px;background:#faf9f7;border-radius:8px;color:var(--muted);font-size:13px}
+.queue-table{min-width:900px}.queue-status{display:inline-block;padding:5px 9px;border-radius:14px;background:#f0efed;font-size:12px;font-weight:600}.queue-status.approved{background:#e9f1e8;color:#35613a}.queue-status.error{background:#fde5e5;color:#a12d2d}.queue-detail{background:#faf9f7;padding:14px;border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 monospace;max-height:340px;overflow:auto}.queue-actions{display:flex;gap:6px;flex-wrap:wrap}.queue-actions button{padding:7px 9px;font-size:12px}
+.dashboard-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}
+.metric-card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:15px}
+.metric-card small{display:block;color:var(--muted);font-size:12px;margin-bottom:8px}
+.metric-card strong{font-size:27px;font-weight:700}
+.dashboard-subgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:18px}
+.dashboard-panel{border:1px solid var(--line);border-radius:10px;padding:15px;background:#fff}
+.dashboard-panel h3{font-size:14px;margin:0 0 12px}
+.owner-dashboard{grid-template-columns:repeat(2,minmax(0,1fr))}.owner-panel{padding:17px}.owner-panel h3{display:flex;align-items:center;gap:9px;font-size:15px;margin-bottom:14px}.owner-gabriele-panel{border-color:#dfd1ec}.owner-vitoria-panel{border-color:#cbdff3}.owner-dot{width:10px;height:10px;border-radius:50%;display:inline-block}.gabriele-dot{background:#80649a}.vitoria-dot{background:#397db8}.owner-total{display:flex;align-items:baseline;gap:10px;margin-bottom:14px}.owner-total strong{font-size:30px}.owner-gabriele-panel .owner-total strong{color:#654b7d}.owner-vitoria-panel .owner-total strong{color:#285d91}.owner-total span,.owner-stats span{font-size:12px;color:var(--muted)}.owner-stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;border-top:1px solid var(--line);padding-top:12px}.owner-stats div{display:flex;justify-content:space-between;align-items:center;gap:8px}.owner-stats strong{font-size:16px}
+.dashboard-line{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid #f0eeeb;font-size:13px}
+.dashboard-line:last-child{border-bottom:0}
+.table-wrap{overflow:auto;width:100%}
+#contractsTable{min-width:1320px}
+#contractsTable th,#contractsTable td{padding:10px 9px;font-size:12px}
+#contractsTable th{white-space:nowrap;background:#faf9f7;position:sticky;top:0}
+#contractsTable td{max-width:230px;overflow-wrap:anywhere}
+.days-pill{display:inline-block;padding:5px 8px;border-radius:14px;background:#f0efed;color:#555;font-weight:700;white-space:nowrap}
+.days-pill.warning{background:#fff0d6;color:#9a5a00}
+.days-pill.critical{background:#fde5e5;color:#a12d2d}
+.obs-cell{min-width:180px;max-width:260px}
+@media(max-width:900px){.dashboard-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.dashboard-subgrid{grid-template-columns:1fr}}
+@media(max-width:650px){main{padding:0 12px}.dashboard-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:650px){header{padding:15px}.grid{grid-template-columns:1fr}main{margin:16px auto}.panel{padding:15px}.stage-head{align-items:flex-start}.stage-meta{gap:8px;display:grid}}
+</style>
+</head>
+<body>
+<header><div class="brand">BONTEMPO<small>GESTÃO INTEGRADA DE PÓS-VENDAS</small></div><button id="logout" class="hidden">Sair</button></header>
+<main>
+<section id="login" class="panel" style="max-width:440px;margin:55px auto">
+<h1>Acesso ao sistema</h1><p class="muted">Entre com o e-mail e a senha compartilhados pelas gestoras.</p>
+<form id="loginForm" class="grid" style="grid-template-columns:1fr">
+<label>E-mail<input id="email" type="email" autocomplete="username" required></label>
+<label>Senha<input id="password" type="password" autocomplete="current-password" required></label>
+<button class="primary" type="submit">Entrar</button></form><div id="loginMsg" class="error"></div></section>
+<section id="app" class="hidden">
+<div style="margin-bottom:18px"><h1>Clientes e contratos</h1><div class="muted">Cadastro central · acesso compartilhado</div></div>
+<section class="panel" id="newContractPanel">
+<div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+<div><h2 style="margin:0">Cadastro de cliente e contrato</h2><div class="muted">Formulário recolhido para liberar espaço à visão gerencial.</div></div>
+<button type="button" id="toggleNewContract">+ Novo cliente e contrato</button>
+</div>
+<div id="newContractContent" class="hidden" style="margin-top:18px">
+<form id="contractForm"><div class="grid">
+<label>Nome do cliente<input id="clientName" required></label><label>Número do contrato<input id="contractNumber" required></label>
+<label>Endereço da obra<input id="address"></label><label>Link do Trello<input id="trello" type="url" placeholder="https://..."></label>
+<label>Etapa atual<select id="stage"><option>Comercial</option><option>Engenharia</option><option>Pós-vendas</option><option>Montagem</option><option>Finalização</option></select></label>
+<label>Gestora responsável<select id="manager"><option value="">Não definida</option><option>Gabriele</option><option>Vitória</option></select></label>
+<label>Conclusão da montagem<input id="assemblyDate" type="date"></label>
+<label>Escritório responsável<input id="officeName" placeholder="Nome do escritório"></label>
+<label>Valor do contrato<input id="contractValue" type="number" min="0" step="0.01" placeholder="R$"></label>
+<label>Data da vistoria<input id="inspectionDate" type="date"></label>
+<label>Data do certificado de garantia<input id="warrantyDate" type="date"></label>
+<label>Início da montagem<input id="assemblyStartDate" type="date"></label>
+<label class="check-label"><span><input id="pcpCompleted" type="checkbox">PCP concluído</span></label>
+<label style="grid-column:1/-1">Observações<textarea id="contractNotes" placeholder="Registre informações importantes sobre o contrato..."></textarea></label></div>
+<div class="actions"><button class="primary" type="submit">Salvar contrato</button><span id="formMsg" class="muted"></span></div></form>
+</div></section>
+<section class="panel" id="overviewPanel">
+<h2>Visão geral da operação</h2>
+<div class="dashboard-grid">
+<div class="metric-card"><small>Clientes ativos</small><strong id="dashClients">—</strong></div>
+<div class="metric-card"><small>Clientes em montagem</small><strong id="dashAssembly">—</strong></div>
+<div class="metric-card"><small>Clientes em finalização</small><strong id="dashFinalization">—</strong></div>
+<div class="metric-card"><small>Contratos na carteira</small><strong id="dashContracts">—</strong></div>
+</div>
+<div class="dashboard-subgrid owner-dashboard">
+<div class="dashboard-panel owner-panel owner-gabriele-panel"><h3><span class="owner-dot gabriele-dot"></span>Gabriele</h3><div class="owner-total"><strong id="dashGabrieleTotal">—</strong><span>Total de clientes</span></div><div class="owner-stats"><div><span>Em montagem</span><strong id="dashGabrieleAssembly">—</strong></div><div><span>Em finalização</span><strong id="dashGabrieleFinalization">—</strong></div></div></div>
+<div class="dashboard-panel owner-panel owner-vitoria-panel"><h3><span class="owner-dot vitoria-dot"></span>Vitória</h3><div class="owner-total"><strong id="dashVitoriaTotal">—</strong><span>Total de clientes</span></div><div class="owner-stats"><div><span>Em montagem</span><strong id="dashVitoriaAssembly">—</strong></div><div><span>Em finalização</span><strong id="dashVitoriaFinalization">—</strong></div></div></div>
+</div>
+</section>
+<section class="panel"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h2>Carteira de contratos</h2><div class="actions" style="margin:0"><button id="syncTrello" class="primary">Sincronizar 8 quadros Trello</button><button id="refresh">Atualizar carteira</button></div></div>
+<div class="tabs"><button class="tab active" data-owner="todos">Visão geral</button><button class="tab" data-owner="Gabriele">Gabriele</button><button class="tab" data-owner="Vitória">Vitória</button></div>
+<div class="table-wrap"><table id="contractsTable"><thead><tr>
+<th>Cliente</th><th>Vendedor</th><th>Etapa</th><th>Gestora</th><th>Trello</th><th>Dias na carteira</th><th>Valor</th><th>Escritório</th><th>Data da vistoria</th><th>Certificado de garantia</th><th>PCP</th><th>Observações</th><th>Ações</th>
+</tr></thead><tbody id="rows"><tr><td colspan="13">Carregando...</td></tr></tbody></table></div>
+<div id="listMsg" class="muted" style="margin-top:10px"></div></section></section>
+<div id="editModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="editTitle">
+  <div class="modal">
+    <div class="modal-head"><h2 id="editTitle">Editar cliente e contrato</h2><button type="button" id="closeEdit">Fechar</button></div>
+    <form id="editForm">
+      <input type="hidden" id="editContractId"><input type="hidden" id="editClientId">
+      <div class="grid">
+        <label>Nome do cliente<input id="editClientName" required></label>
+        <label>Número do contrato<input id="editContractNumber" required></label>
+        <label>Endereço da obra<input id="editAddress"></label>
+        <label>Link do Trello<input id="editTrello" type="url" placeholder="https://..."></label>
+        <label>Etapa atual<select id="editStage"><option>Comercial</option><option>Engenharia</option><option>Pós-vendas</option><option>Montagem</option><option>Finalização</option></select></label>
+        <label>Gestora responsável<select id="editManager"><option value="">Não definida</option><option value="Gabriele">Gabriele</option><option value="Vitória">Vitória</option></select></label>
+        <label>Conclusão da montagem<input id="editAssemblyDate" type="date"></label>
+<label>Escritório responsável<input id="editOfficeName" placeholder="Nome do escritório"></label>
+<label>Valor do contrato<input id="editContractValue" type="number" min="0" step="0.01" placeholder="R$"></label>
+<label>Data da vistoria<input id="editInspectionDate" type="date"></label>
+<label>Data do certificado de garantia<input id="editWarrantyDate" type="date"></label>
+<label>Início da montagem<input id="editAssemblyStartDate" type="date"></label>
+<label class="check-label"><span><input id="editPcpCompleted" type="checkbox">PCP concluído</span></label>
+<label style="grid-column:1/-1">Observações<textarea id="editContractNotes" placeholder="Registre informações importantes sobre o contrato..."></textarea></label>
+      </div>
+      <div id="editMsg" class="error"></div>
+      <div class="modal-actions"><button type="button" id="cancelEdit">Cancelar</button><button class="primary" type="submit">Salvar alterações</button></div>
+    </form>
+  </div>
+</div>
+</main>
+<script>
+const SUPABASE_URL='https://ybyvjpopmsmhabdfegtv.supabase.co';
+// Publishable key do projeto. Nunca use Secret/service_role no navegador.
+const SUPABASE_PUBLISHABLE_KEY='sb_publishable_JIARICPQCuH5IKrVjUlbpQ_ZHUBYDp5';
+const db=window.supabase.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
+let currentOwner='todos',expandedContractId=null;const $=id=>document.getElementById(id);
+$('toggleNewContract').addEventListener('click',()=>{
+ const content=$('newContractContent'),isHidden=content.classList.toggle('hidden');
+ $('toggleNewContract').textContent=isHidden?'+ Novo cliente e contrato':'− Recolher cadastro';
+});
+function showApp(session){$('login').classList.toggle('hidden',!!session);$('app').classList.toggle('hidden',!session);$('logout').classList.toggle('hidden',!session);if(session)loadContracts()}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function formatDate(value){if(!value)return '—';const d=new Date(value.length===10?value+'T12:00:00':value);return Number.isNaN(d.getTime())?esc(value):d.toLocaleDateString('pt-BR')}
+function stageBadge(stage){
+ const classes={'Comercial':'stage-comercial','Engenharia':'stage-engenharia','Pós-vendas':'stage-posvendas','Montagem':'stage-montagem','Finalização':'stage-finalizacao'};
+ return `<span class="stage-badge ${classes[stage]||''}">${esc(stage||'—')}</span>`;
+}
+function daysCount(startDate){
+ if(!startDate)return null;
+ const start=new Date(startDate+'T00:00:00'),today=new Date();today.setHours(0,0,0,0);
+ const days=Math.floor((today-start)/86400000)+1;
+ return days>=1?days:0;
+}
+function daysInPortfolio(startDate){
+ const days=daysCount(startDate);
+ if(days===null)return '—';
+ const cls=days>120?'critical':days>90?'warning':'';
+ return `<span class="days-pill ${cls}">${days} dia(s)</span>`;
+}
+function money(value){
+ if(value===null||value===undefined||value==='')return '—';
+ return Number(value).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+}
+function renderDashboard(data){
+ const countClients=(owner,stage=null)=>{
+  const ids=new Set(data.filter(c=>c.client_id&&c.clients?.portfolio_owner===owner&&(!stage||c.current_stage===stage)).map(c=>c.client_id));
+  return ids.size;
+ };
+ $('dashClients').textContent=new Set(data.map(c=>c.client_id).filter(Boolean)).size;
+ $('dashContracts').textContent=data.length;
+ $('dashAssembly').textContent=new Set(data.filter(c=>c.current_stage==='Montagem').map(c=>c.client_id).filter(Boolean)).size;
+ $('dashFinalization').textContent=new Set(data.filter(c=>c.current_stage==='Finalização').map(c=>c.client_id).filter(Boolean)).size;
+ $('dashGabrieleTotal').textContent=countClients('Gabriele');
+ $('dashGabrieleAssembly').textContent=countClients('Gabriele','Montagem');
+ $('dashGabrieleFinalization').textContent=countClients('Gabriele','Finalização');
+ $('dashVitoriaTotal').textContent=countClients('Vitória');
+ $('dashVitoriaAssembly').textContent=countClients('Vitória','Montagem');
+ $('dashVitoriaFinalization').textContent=countClients('Vitória','Finalização');
+}
+function normalizedText(v){return String(v??'').trim().toLocaleLowerCase('pt-BR')}
+function validStage(v){return ['Comercial','Engenharia','Pós-vendas','Montagem','Finalização'].includes(v)?v:null}
+function resolveQueueStage(t){
+ const detected=[...new Set((Array.isArray(t.detected_stages)?t.detected_stages:[]).map(validStage).filter(Boolean))];
+ if(detected.length===1)return detected[0];
+ if(detected.length>1)return null;
+ const details=Array.isArray(t.card_stage_details)?t.card_stage_details:[];
+ const mapped=[...new Set(details.map(item=>{
+  if(item.stage&&validStage(item.stage))return item.stage;
+  const color=String(item.stage_color||item.list_color||'').toLowerCase();
+  if(color==='teal')return 'Montagem';
+  return null;
+ }).filter(Boolean))];
+ return mapped.length===1?mapped[0]:null;
+}
+
+function validOwner(v){
+ const name=String(v??'').trim().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('pt-BR');
+ if(/^gabriele(?:\b|\s)/.test(name))return 'Gabriele';
+ if(/^vitoria(?:\b|\s)/.test(name))return 'Vitória';
+ return null;
+}
+function cleanOfficeName(value){
+ if(value===null||value===undefined)return null;
+ let name=String(value).replace(/\r/g,'\n').split('\n')[0].trim();
+ if(!name)return null;
+ name=name.split(/\s+[–—-]\s+/)[0].trim();
+ name=name.split(/\s+(?=\(?\d{2}\)?\s*9?\d{4}[-.\s]?\d{4})/)[0].trim();
+ name=name.split(/\s+(?=[\w.+-]+@[\w.-]+\.[A-Za-z]{2,})/)[0].trim();
+ name=name.replace(/\s*(?:telefone|tel\.?|contato)\s*:.*$/i,'').trim();
+ return name||null;
+}
+function numericValue(v){
+ if(v===null||v===undefined||v==='')return null;
+ if(typeof v==='number')return Number.isFinite(v)?v:null;
+ const cleaned=String(v).replace(/[^0-9,.-]/g,'').replace(/\.(?=\d{3}(?:\D|$))/g,'').replace(',','.');
+ const n=Number(cleaned);return Number.isFinite(n)?n:null;
+}
+function parseJsonObject(value){
+ if(value&&typeof value==='object'&&!Array.isArray(value))return value;
+ if(typeof value==='string'){try{const parsed=JSON.parse(value);return parsed&&typeof parsed==='object'?parsed:{}}catch(_){return {}}}
+ return {};
+}
+function referenceTokens(value){
+ const raw=Array.isArray(value)?value:[value];
+ const out=new Set();
+ raw.forEach(item=>{
+  const str=String(item??'').trim();
+  if(!str)return;
+  out.add(normalizedText(str));
+  str.split(/[|;,/]+/).map(x=>x.trim()).filter(Boolean).forEach(x=>out.add(normalizedText(x)));
+ });
+ return out;
+}
+async function syncQueueToContracts(){
+ const button=$('refresh');button.disabled=true;button.textContent='Atualizando...';
+ try{
+  const {data:queue,error:qError}=await db.from('trello_list_import_queue').select('id,client_name,contract_references,source_list_name,extracted_data,updated_at').order('updated_at',{ascending:false});
+  if(qError)throw new Error('Não foi possível ler a fila do Trello: '+qError.message);
+  if(!queue?.length){$('listMsg').textContent='Nenhum dado sincronizado do Trello para aplicar.';await loadContracts();return}
+  const {data:allContracts,error:cError}=await db.from('contracts').select('id,contract_number,client_id,work_address,office_name,contract_value,clients(name,portfolio_owner)');
+  if(cError)throw new Error('Não foi possível consultar os contratos: '+cError.message);
+  let updatedContracts=0,updatedClients=0,matchedLists=0,skipped=0;
+  const issues=[];
+  for(const item of queue){
+   const extracted=parseJsonObject(item.extracted_data);
+   const t=parseJsonObject(extracted.trello);
+   const manual=parseJsonObject(extracted.manual);
+   const clientName=manual.client_name||t.client_name||item.client_name||'';
+   const refsRaw=manual.contract_references??t.contract_references??item.contract_references??[];
+   const refs=referenceTokens(refsRaw);
+   let matched=(allContracts||[]).filter(c=>refs.has(normalizedText(c.contract_number)));
+   if(!matched.length&&clientName){
+    matched=(allContracts||[]).filter(c=>normalizedText(c.clients?.name)===normalizedText(clientName));
+   }
+   if(!matched.length){skipped++;issues.push(`${clientName||item.source_list_name}: contrato não localizado`);continue}
+   matchedLists++;
+   const stages=[...new Set((Array.isArray(t.detected_stages)?t.detected_stages:[]).map(validStage).filter(Boolean))];
+   const details=Array.isArray(t.card_stage_details)?t.card_stage_details:[];
+   const stage=resolveQueueStage(t);
+   if(stages.length>1)issues.push(`${clientName}: mais de uma etapa identificada; etapa preservada`);
+   const postSalesCards=details.filter(x=>x.is_post_sales_card===true);
+   const owners=[...new Set(postSalesCards.map(x=>validOwner(x.portfolio_owner)).filter(Boolean))];
+   const ownerCanBeSet=postSalesCards.length>0&&owners.length<=1;
+   if(postSalesCards.length&&owners.length>1)issues.push(`${clientName}: mais de uma gestora nos cartões de Pós-vendas; gestora preservada`);
+   const address=manual.work_address??t.work_address;
+   const trelloOffice=t.office_name;
+   const office=Object.prototype.hasOwnProperty.call(manual,'office_name')&&manual.office_name?String(manual.office_name).trim():cleanOfficeName(trelloOffice);
+   const value=numericValue(manual.contract_value??t.contract_value);
+   for(const c of matched){
+    const contractPatch={};
+    if(stage)contractPatch.current_stage=stage;
+    if(!c.work_address&&address!==null&&address!==undefined&&String(address).trim())contractPatch.work_address=String(address).trim();
+    if(!c.office_name&&office)contractPatch.office_name=office;
+    else if(c.office_name&&trelloOffice&&String(c.office_name).trim()===String(trelloOffice).trim()&&office&&office!==String(c.office_name).trim())contractPatch.office_name=office;
+    if((c.contract_value===null||c.contract_value===undefined||c.contract_value==='')&&value!==null)contractPatch.contract_value=value;
+    if(Object.keys(contractPatch).length){
+     const {error}=await db.from('contracts').update(contractPatch).eq('id',c.id);
+     if(error)throw new Error(`Erro ao atualizar contrato ${c.contract_number}: ${error.message}`);
+     updatedContracts++;
+    }
+   }
+   if(ownerCanBeSet){
+    const clientIds=[...new Set(matched.map(c=>c.client_id).filter(Boolean))];
+    for(const clientId of clientIds){
+     const desiredOwner=owners[0]||null;
+     const current=(allContracts||[]).find(c=>c.client_id===clientId)?.clients?.portfolio_owner??null;
+     if(current===desiredOwner)continue;
+     const {error}=await db.from('clients').update({portfolio_owner:desiredOwner}).eq('id',clientId);
+     if(error)throw new Error(`Erro ao atualizar gestora de ${clientName}: ${error.message}`);
+     updatedClients++;
+    }
+   }
+  }
+  await loadContracts();
+  const summary=`Atualização concluída: ${matchedLists} registro(s) relacionado(s), ${updatedContracts} contrato(s) atualizado(s), ${updatedClients} gestora(s) atualizada(s)${skipped?`, ${skipped} sem correspondência`:''}.`;
+  $('listMsg').textContent=issues.length?summary+' Atenção: '+issues.join(' · '):summary;
+ }catch(err){$('listMsg').textContent='Falha na atualização automática: '+(err.message||String(err));await loadContracts();$('listMsg').textContent='Falha na atualização automática: '+(err.message||String(err))}
+ finally{button.disabled=false;button.textContent='Atualizar carteira'}
+}
+function sourceSellerFromQueueRows(queueRows, contract){
+ const contractNumber=normalizedText(contract.contract_number);
+ const clientName=normalizedText(contract.clients?.name);
+ for(const row of (queueRows||[])){
+  const extracted=parseJsonObject(row.extracted_data);
+  const trello=parseJsonObject(extracted.trello);
+  const refs=referenceTokens(extracted.manual?.contract_references??trello.contract_references??row.contract_references??[]);
+  const rowClient=normalizedText(extracted.manual?.client_name??trello.client_name??row.client_name??'');
+  if((contractNumber&&refs.has(contractNumber))||(clientName&&rowClient===clientName)){
+   return trello.source_seller||null;
+  }
+ }
+ return null;
+}
+
+async function syncTrelloBoards(){
+ const button=$('syncTrello');
+ button.disabled=true;button.textContent='Sincronizando...';
+ try{
+  const {data,error}=await db.functions.invoke('trello-contract-preview',{body:{}});
+  if(error)throw new Error(error.message||'Falha ao executar a sincronização dos quadros.');
+  if(data?.success===false)throw new Error(data.error||'A sincronização não foi concluída.');
+  await syncQueueToContracts();
+  $('listMsg').textContent=`Sincronização concluída. Quadros consultados: ${data?.total_boards??8}. A carteira foi atualizada com os dados da fila.`;
+ }catch(err){
+  $('listMsg').textContent='Falha ao sincronizar os quadros Trello: '+(err.message||String(err));
+ }finally{
+  button.disabled=false;button.textContent='Sincronizar 8 quadros Trello';
+ }
+}
+
+async function loadContracts(){
+$('rows').innerHTML='<tr><td colspan="13">Carregando...</td></tr>';
+const {data,error}=await db.from('contracts').select('id,client_id,contract_number,work_address,trello_url,current_stage,assembly_completed_at,assembly_started_at,office_name,contract_value,inspection_date,pcp_completed,warranty_certificate_attached_at,contract_notes,clients(name,portfolio_owner)').order('created_at',{ascending:false});
+if(error){$('rows').innerHTML='<tr><td colspan="13">Não foi possível carregar os contratos.</td></tr>';$('listMsg').textContent=error.message;return}
+const {data:queueRows,error:queueError}=await db.from('trello_list_import_queue').select('client_name,contract_references,extracted_data,source_list_name').order('updated_at',{ascending:false});
+if(queueError){$('listMsg').textContent='Contratos carregados, mas não foi possível identificar vendedores: '+queueError.message;}
+const allData=(data||[]).map(c=>({...c,source_seller:sourceSellerFromQueueRows(queueRows||[],c)}));
+renderDashboard(allData);
+const stageOrder={'Comercial':1,'Engenharia':2,'Pós-vendas':3,'Montagem':4,'Finalização':5};
+const visibleData=(currentOwner==='todos'?allData:allData.filter(c=>c.clients?.portfolio_owner===currentOwner)).slice().sort((a,b)=>{
+ const stageDiff=(stageOrder[a.current_stage]||99)-(stageOrder[b.current_stage]||99);
+ if(stageDiff!==0)return stageDiff;
+ return String(a.clients?.name||'').localeCompare(String(b.clients?.name||''),'pt-BR',{sensitivity:'base'});
+});
+if(!visibleData.length){$('rows').innerHTML='<tr><td colspan="13">Nenhum contrato atribuído a '+esc(currentOwner)+'.</td></tr>';$('listMsg').textContent='0 contrato(s) · 0 cliente(s) único(s)';return}
+$('rows').innerHTML=visibleData.map(c=>`<tr>
+<td><button class="client-name" data-open-contract="${esc(c.id)}">${esc(c.clients?.name)}</button></td>
+<td>${esc(c.source_seller||'—')}</td>
+ <td>${stageBadge(c.current_stage)}</td>
+<td>${c.clients?.portfolio_owner?`<span class="owner-badge ${c.clients.portfolio_owner==='Gabriele'?'owner-gabriele':'owner-vitoria'}">${esc(c.clients.portfolio_owner)}</span>`:'—'}</td>
+<td>${c.trello_url?`<a class="trello-link" href="${esc(c.trello_url)}" target="_blank" rel="noopener noreferrer">Abrir Trello ↗</a>`:'—'}</td>
+<td>${daysInPortfolio(c.assembly_started_at)}</td><td>${money(c.contract_value)}</td><td>${esc(c.office_name||'—')}</td>
+<td>${formatDate(c.inspection_date)}</td><td>${formatDate(c.warranty_certificate_attached_at)}</td>
+<td>${c.pcp_completed?'Concluído':'Pendente'}</td><td class="obs-cell">${esc(c.contract_notes||'—')}</td>
+<td><div class="row-actions"><button data-edit-contract="${esc(c.id)}">Editar</button><button class="danger" data-delete-contract="${esc(c.id)}">Excluir</button></div></td>
+</tr>${expandedContractId===c.id?`<tr class="detail-row"><td colspan="13"><div id="timeline-${esc(c.id)}">Carregando linha do tempo...</div></td></tr>`:''}`).join('');
+$('listMsg').textContent=`${visibleData.length} contrato(s) · ${new Set(visibleData.map(c=>c.client_id).filter(Boolean)).size} cliente(s) único(s)`;
+document.querySelectorAll('[data-open-contract]').forEach(b=>b.addEventListener('click',()=>toggleTimeline(b.dataset.openContract)));
+document.querySelectorAll('[data-edit-contract]').forEach(b=>b.addEventListener('click',()=>editContract(b.dataset.editContract)));
+document.querySelectorAll('[data-delete-contract]').forEach(b=>b.addEventListener('click',()=>deleteContract(b.dataset.deleteContract)));
+if(expandedContractId)loadTimeline(expandedContractId);
+}
+
+async function editContract(id){
+  const {data:c,error}=await db.from('contracts').select('id,client_id,contract_number,work_address,trello_url,current_stage,assembly_completed_at,assembly_started_at,office_name,contract_value,inspection_date,pcp_completed,warranty_certificate_attached_at,contract_notes,clients(name,portfolio_owner)').eq('id',id).single();
+  if(error){alert('Não foi possível abrir o contrato para edição: '+error.message);return;}
+  $('editContractId').value=c.id;$('editClientId').value=c.client_id;
+  $('editClientName').value=c.clients?.name||'';$('editContractNumber').value=c.contract_number||'';
+  $('editAddress').value=c.work_address||'';$('editTrello').value=c.trello_url||'';
+  $('editStage').value=c.current_stage||'Comercial';$('editManager').value=c.clients?.portfolio_owner||'';
+  $('editAssemblyDate').value=c.assembly_completed_at||'';
+  $('editOfficeName').value=c.office_name||'';
+  $('editContractValue').value=c.contract_value??'';
+  $('editInspectionDate').value=c.inspection_date||'';
+  $('editWarrantyDate').value=c.warranty_certificate_attached_at||'';
+  $('editAssemblyStartDate').value=c.assembly_started_at||'';
+  $('editPcpCompleted').checked=!!c.pcp_completed;
+  $('editContractNotes').value=c.contract_notes||'';
+  $('editMsg').textContent='';
+  $('editModal').classList.remove('hidden');
+}
+function closeEditModal(){$('editModal').classList.add('hidden')}
+$('closeEdit').addEventListener('click',closeEditModal);$('cancelEdit').addEventListener('click',closeEditModal);
+$('editModal').addEventListener('click',e=>{if(e.target===$('editModal'))closeEditModal()});
+$('editForm').addEventListener('submit',async e=>{
+  e.preventDefault();$('editMsg').textContent='Salvando...';
+  const contractId=$('editContractId').value,clientId=$('editClientId').value;
+  const {error:clientError}=await db.from('clients').update({name:$('editClientName').value.trim(),portfolio_owner:$('editManager').value||null}).eq('id',clientId);
+  if(clientError){$('editMsg').textContent='Erro ao atualizar cliente: '+clientError.message;return;}
+  const {error:contractError}=await db.from('contracts').update({contract_number:$('editContractNumber').value.trim(),work_address:$('editAddress').value.trim()||null,trello_url:$('editTrello').value.trim()||null,current_stage:$('editStage').value,assembly_completed_at:$('editAssemblyDate').value||null,
+    office_name:$('editOfficeName').value.trim()||null,
+    contract_value:$('editContractValue').value===''?null:Number($('editContractValue').value),
+    inspection_date:$('editInspectionDate').value||null,
+    warranty_certificate_attached_at:$('editWarrantyDate').value||null,
+    assembly_started_at:$('editAssemblyStartDate').value||null,
+    pcp_completed:$('editPcpCompleted').checked,
+    contract_notes:$('editContractNotes').value.trim()||null
+  }).eq('id',contractId);
+  if(contractError){$('editMsg').textContent='Cliente atualizado, mas houve erro no contrato: '+contractError.message;return;}
+  closeEditModal();await loadContracts();
+});
+
+async function deleteContract(id){
+  const {data:c,error:readError}=await db.from('contracts').select('id,contract_number,client_id,clients(name)').eq('id',id).single();
+  if(readError){alert('Não foi possível localizar o contrato: '+readError.message);return;}
+  const clientName=c.clients?.name||'este cliente';
+  if(!confirm(`Excluir somente o contrato ${c.contract_number} de ${clientName}? Esta ação não pode ser desfeita. O cadastro do cliente será mantido.`))return;
+  const {error}=await db.from('contracts').delete().eq('id',id);
+  if(error){alert('Não foi possível excluir o contrato: '+error.message);return;}
+  if(expandedContractId===id)expandedContractId=null;
+  await loadContracts();
+}
+
+async function toggleTimeline(id){expandedContractId=expandedContractId===id?null:id;await loadContracts()}
+async function loadTimeline(id){
+const target=$(`timeline-${id}`);if(!target)return;target.textContent='Carregando etapas e documentos...';
+const {data:stages,error}=await db.from('contract_execution_stages').select('id,contract_id,stage_number,stage_name,executive_signed_at,production_days,production_due_date,deadline_status').eq('contract_id',id).order('stage_number',{ascending:true});
+if(error){target.innerHTML=`<div class="error">Não foi possível carregar as etapas: ${esc(error.message)}</div>`;return}
+if(!stages?.length){target.innerHTML='<div class="empty">Ainda não há etapas de execução vinculadas a este contrato.</div>';return}
+const {data:links,error:linkError}=await db.from('contract_signature_attachments').select('execution_stage_id,selected_for_signature,validation_status,trello_attachments(file_name,file_url,mime_type,attached_at,is_executive_signature)').in('execution_stage_id',stages.map(s=>s.id));
+if(linkError){target.innerHTML=`<div class="error">Não foi possível carregar os PDFs: ${esc(linkError.message)}</div>`;return}
+const grouped={};(links||[]).forEach(link=>{const docs=Array.isArray(link.trello_attachments)?link.trello_attachments:[link.trello_attachments];(grouped[link.execution_stage_id]??=[]).push(...docs.filter(Boolean).map(f=>({...f,selected:link.selected_for_signature,validation:link.validation_status})))});
+const next=stages.find(s=>s.deadline_status==='Calculado'&&s.production_due_date);
+target.innerHTML=`<div class="timeline-title"><strong>Linha do tempo do contrato</strong><span class="muted">${stages.length} etapa(s)</span></div>
+${next?`<div class="next-date"><strong>Previsão de conclusão:</strong> ${formatDate(next.production_due_date)} · Etapa ${esc(next.stage_number)}</div>`:'<div class="empty" style="margin-bottom:14px">Não há previsão calculada. Verifique a data de assinatura ou o prazo de produção.</div>'}
+<div class="timeline">${stages.map(s=>{const docs=grouped[s.id]||[];return `<div class="stage ${s.deadline_status==='Calculado'?'calculated':''}"><div class="stage-marker"></div><div class="stage-content">
+<div class="stage-head"><span class="stage-name">${esc(s.stage_name||'Etapa')} · Etapa ${esc(s.stage_number)}</span><span class="status ${s.deadline_status==='Calculado'?'ok':''}">${esc(s.deadline_status||'Conferir')}</span></div>
+<div class="stage-meta"><span>Início / assinatura: <strong>${formatDate(s.executive_signed_at)}</strong></span><span>Prazo: <strong>${s.production_days?esc(s.production_days)+' dias úteis':'Não definido'}</strong></span><span>Previsão: <strong>${formatDate(s.production_due_date)}</strong></span></div>
+<div class="pdf-list">${docs.length?docs.map(f=>`<div>${f.file_url?`<a class="pdf-link" href="${esc(f.file_url)}" target="_blank" rel="noopener noreferrer">Abrir PDF: ${esc(f.file_name||'Documento')}</a>`:`<span class="muted">PDF sem endereço de acesso: ${esc(f.file_name||'Documento')}</span>`}${f.selected?'<span class="muted"> · selecionado</span>':''}</div>`).join(''):'<span class="muted">Nenhum PDF vinculado a esta etapa.</span>'}</div>
+</div></div>`}).join('')}</div>`;
+}
+$('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginMsg').textContent='Entrando...';const {data,error}=await db.auth.signInWithPassword({email:$('email').value.trim(),password:$('password').value});$('loginMsg').textContent=error?error.message:'';if(data.session)showApp(data.session)});
+$('logout').addEventListener('click',async()=>{await db.auth.signOut();showApp(null)});
+$('contractForm').addEventListener('submit',async e=>{e.preventDefault();$('formMsg').textContent='Salvando...';const {data:client,error:ce}=await db.from('clients').insert({name:$('clientName').value.trim(),portfolio_owner:$('manager').value||null}).select('id').single();if(ce){$('formMsg').textContent=ce.message;return}
+const payload={client_id:client.id,contract_number:$('contractNumber').value.trim(),work_address:$('address').value.trim()||null,trello_url:$('trello').value.trim()||null,current_stage:$('stage').value,assembly_completed_at:$('assemblyDate').value||null,
+office_name:$('officeName').value.trim()||null,
+contract_value:$('contractValue').value===''?null:Number($('contractValue').value),
+inspection_date:$('inspectionDate').value||null,
+warranty_certificate_attached_at:$('warrantyDate').value||null,
+assembly_started_at:$('assemblyStartDate').value||null,
+pcp_completed:$('pcpCompleted').checked,
+contract_notes:$('contractNotes').value.trim()||null
+};
+const {error}=await db.from('contracts').insert(payload);if(error){$('formMsg').textContent='Cliente criado, mas houve erro ao salvar o contrato: '+error.message;return}
+$('contractForm').reset();$('formMsg').textContent='Contrato salvo.';loadContracts()});
+document.querySelectorAll('[data-owner]').forEach(b=>b.addEventListener('click',()=>{currentOwner=b.dataset.owner;expandedContractId=null;document.querySelectorAll('[data-owner]').forEach(x=>x.classList.toggle('active',x===b));loadContracts()}));
+$('refresh').addEventListener('click',syncQueueToContracts);$('syncTrello').addEventListener('click',syncTrelloBoards);db.auth.getSession().then(({data})=>showApp(data.session));db.auth.onAuthStateChange((_event,session)=>showApp(session));
+</script></body></html>
