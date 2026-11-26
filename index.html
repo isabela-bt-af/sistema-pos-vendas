@@ -1,7 +1,6 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-<meta name="application-version" content="V20">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bontempo | Gestão Integrada de Pós-vendas</title>
@@ -201,12 +200,7 @@ function renderDashboard(data){
  $('dashVitoriaAssembly').textContent=countClients('Vitória','Montagem');
  $('dashVitoriaFinalization').textContent=countClients('Vitória','Finalização');
 }
-function normalizedText(v){
- return String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLocaleLowerCase('pt-BR').replace(/\s+/g,' ');
-}
-function normalizedContractKey(v){
- return String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('pt-BR').replace(/[^a-z0-9]/g,'');
-}
+function normalizedText(v){return String(v??'').trim().toLocaleLowerCase('pt-BR')}
 function validStage(v){return ['Comercial','Engenharia','Pós-vendas','Montagem','Finalização'].includes(v)?v:null}
 function resolveQueueStage(t){
  const detected=[...new Set((Array.isArray(t.detected_stages)?t.detected_stages:[]).map(validStage).filter(Boolean))];
@@ -255,27 +249,11 @@ function referenceTokens(value){
  raw.forEach(item=>{
   const str=String(item??'').trim();
   if(!str)return;
-  const parts=str.split(/[|;,/]+/).map(x=>x.trim()).filter(Boolean);
-  [str,...parts].forEach(part=>{
-   const key=normalizedContractKey(part);
-   if(key)out.add(key);
-  });
+  out.add(normalizedText(str));
+  str.split(/[|;,/]+/).map(x=>x.trim()).filter(Boolean).forEach(x=>out.add(normalizedText(x)));
  });
  return out;
 }
-
-function contractReferenceParts(value){
- const raw=Array.isArray(value)?value:[value];
- const parts=[];
- raw.forEach(item=>{
-  String(item??'').split(/[|;,/]+/).map(x=>x.trim()).filter(Boolean).forEach(part=>{
-   const key=normalizedContractKey(part);
-   if(key&&!parts.some(x=>normalizedContractKey(x)===key))parts.push(part);
-  });
- });
- return parts;
-}
-
 async function syncQueueToContracts(){
  const button=$('refresh');button.disabled=true;button.textContent='Atualizando...';
  try{
@@ -284,97 +262,79 @@ async function syncQueueToContracts(){
   if(!queue?.length){$('listMsg').textContent='Nenhum dado sincronizado do Trello para aplicar.';await loadContracts();return}
   const {data:allContracts,error:cError}=await db.from('contracts').select('id,contract_number,client_id,work_address,office_name,contract_value,clients(name,portfolio_owner)');
   if(cError)throw new Error('Não foi possível consultar os contratos: '+cError.message);
-  const {data:allClients,error:clError}=await db.from('clients').select('id,name,portfolio_owner');
-  if(clError)throw new Error('Não foi possível consultar os clientes: '+clError.message);
-  let updatedContracts=0,createdContracts=0,createdClients=0,updatedClients=0,matchedLists=0,skipped=0;
+  let updatedContracts=0,updatedClients=0,matchedLists=0,skipped=0;
   const issues=[];
-    const clientsCache=[...(allClients||[])];
-  const contractsCache=[...(allContracts||[])];
   for(const item of queue){
    const extracted=parseJsonObject(item.extracted_data);
    const t=parseJsonObject(extracted.trello);
    const manual=parseJsonObject(extracted.manual);
-   const clientName=String(manual.client_name||t.client_name||item.client_name||'').trim();
+   const clientName=manual.client_name||t.client_name||item.client_name||'';
    const refsRaw=manual.contract_references??t.contract_references??item.contract_references??[];
-   const refParts=contractReferenceParts(refsRaw);
-   if(!clientName||!refParts.length){skipped++;issues.push(`${clientName||item.source_list_name}: nome ou número de contrato ausente; cadastro não criado`);continue;}
-
-   const matchingClients=clientsCache.filter(c=>normalizedText(c.name)===normalizedText(clientName));
-   let client=matchingClients.length===1?matchingClients[0]:null;
-   if(matchingClients.length>1){skipped++;issues.push(`${clientName}: há mais de um cadastro de cliente com esse nome; novos contratos não criados`);continue;}
-
+   const refs=referenceTokens(refsRaw);
+   let matched=(allContracts||[]).filter(c=>refs.has(normalizedText(c.contract_number)));
+   if(!matched.length&&clientName){
+    matched=(allContracts||[]).filter(c=>normalizedText(c.clients?.name)===normalizedText(clientName));
+   }
+   if(!matched.length){skipped++;issues.push(`${clientName||item.source_list_name}: contrato não localizado`);continue}
+   if(matched.length>1){
+    skipped++;
+    issues.push(`${clientName||item.source_list_name}: número de contrato duplicado no sistema; associação não realizada`);
+    continue;
+   }
+   matchedLists++;
+   const stages=[...new Set((Array.isArray(t.detected_stages)?t.detected_stages:[]).map(validStage).filter(Boolean))];
    const details=Array.isArray(t.card_stage_details)?t.card_stage_details:[];
    const stage=resolveQueueStage(t);
-   const stages=[...new Set((Array.isArray(t.detected_stages)?t.detected_stages:[]).map(validStage).filter(Boolean))];
-   if(stages.length>1)issues.push(`${clientName}: mais de uma etapa identificada; etapa não aplicada aos novos contratos`);
+   if(stages.length>1)issues.push(`${clientName}: mais de uma etapa identificada; etapa preservada`);
    const postSalesCards=details.filter(x=>x.is_post_sales_card===true);
    const owners=[...new Set(postSalesCards.map(x=>validOwner(x.portfolio_owner)).filter(Boolean))];
    const ownerCanBeSet=postSalesCards.length>0&&owners.length<=1;
    if(postSalesCards.length&&owners.length>1)issues.push(`${clientName}: mais de uma gestora nos cartões de Pós-vendas; gestora preservada`);
-   const desiredOwner=ownerCanBeSet?(owners[0]||null):null;
    const address=manual.work_address??t.work_address;
    const trelloOffice=t.office_name;
    const office=Object.prototype.hasOwnProperty.call(manual,'office_name')&&manual.office_name?String(manual.office_name).trim():cleanOfficeName(trelloOffice);
    const value=numericValue(manual.contract_value??t.contract_value);
-   const trelloUrl=t.trello_url||t.url||null;
-
-   for(const refPart of refParts){
-    const key=normalizedContractKey(refPart);
-    const existing=contractsCache.filter(c=>contractReferenceParts(c.contract_number).some(part=>normalizedContractKey(part)===key));
-    if(existing.length>1){skipped++;issues.push(`${clientName} (${refPart}): número de contrato duplicado no sistema; associação não realizada`);continue;}
-    if(existing.length===1){
-     const c=existing[0];
-     if(normalizedText(c.clients?.name)!==normalizedText(clientName)){
-      skipped++;issues.push(`${clientName} (${refPart}): número já vinculado a outro cliente (${c.clients?.name||'sem nome'}); nenhuma alteração realizada`);continue;
-     }
-     matchedLists++;
-     const patch={};
-     if(stage)patch.current_stage=stage;
-     if(!c.trello_url&&trelloUrl)patch.trello_url=trelloUrl;
-     if(!c.work_address&&address!==null&&address!==undefined&&String(address).trim())patch.work_address=String(address).trim();
-     if(!c.office_name&&office)patch.office_name=office;
-     else if(c.office_name&&trelloOffice&&String(c.office_name).trim()===String(trelloOffice).trim()&&office&&office!==String(c.office_name).trim())patch.office_name=office;
-     if((c.contract_value===null||c.contract_value===undefined||c.contract_value==='')&&value!==null)patch.contract_value=value;
-     if(Object.keys(patch).length){const {error}=await db.from('contracts').update(patch).eq('id',c.id);if(error)throw new Error(`Erro ao atualizar contrato ${c.contract_number}: ${error.message}`);Object.assign(c,patch);updatedContracts++;}
-     if(ownerCanBeSet&&c.client_id){
-      const current=clientsCache.find(x=>x.id===c.client_id)?.portfolio_owner??c.clients?.portfolio_owner??null;
-      if(current!==desiredOwner){const {error}=await db.from('clients').update({portfolio_owner:desiredOwner}).eq('id',c.client_id);if(error)throw new Error(`Erro ao atualizar gestora de ${clientName}: ${error.message}`);const cached=clientsCache.find(x=>x.id===c.client_id);if(cached)cached.portfolio_owner=desiredOwner;if(c.clients)c.clients.portfolio_owner=desiredOwner;updatedClients++;}
-     }
-     continue;
+   for(const c of matched){
+    const contractPatch={};
+    if(stage)contractPatch.current_stage=stage;
+    if(!c.work_address&&address!==null&&address!==undefined&&String(address).trim())contractPatch.work_address=String(address).trim();
+    if(!c.office_name&&office)contractPatch.office_name=office;
+    else if(c.office_name&&trelloOffice&&String(c.office_name).trim()===String(trelloOffice).trim()&&office&&office!==String(c.office_name).trim())contractPatch.office_name=office;
+    if((c.contract_value===null||c.contract_value===undefined||c.contract_value==='')&&value!==null)contractPatch.contract_value=value;
+    if(Object.keys(contractPatch).length){
+     const {error}=await db.from('contracts').update(contractPatch).eq('id',c.id);
+     if(error)throw new Error(`Erro ao atualizar contrato ${c.contract_number}: ${error.message}`);
+     updatedContracts++;
     }
-
-    if(!client){
-     const payload={name:clientName,portfolio_owner:desiredOwner};
-     const {data:newClient,error}=await db.from('clients').insert(payload).select('id,name,portfolio_owner').single();
-     if(error)throw new Error(`Erro ao criar cliente ${clientName}: ${error.message}`);
-     client=newClient;clientsCache.push(client);createdClients++;
-    }else if(ownerCanBeSet&&client.portfolio_owner!==desiredOwner){
-     const {error}=await db.from('clients').update({portfolio_owner:desiredOwner}).eq('id',client.id);
+   }
+   if(ownerCanBeSet){
+    const clientIds=[...new Set(matched.map(c=>c.client_id).filter(Boolean))];
+    for(const clientId of clientIds){
+     const desiredOwner=owners[0]||null;
+     const current=(allContracts||[]).find(c=>c.client_id===clientId)?.clients?.portfolio_owner??null;
+     if(current===desiredOwner)continue;
+     const {error}=await db.from('clients').update({portfolio_owner:desiredOwner}).eq('id',clientId);
      if(error)throw new Error(`Erro ao atualizar gestora de ${clientName}: ${error.message}`);
-     client.portfolio_owner=desiredOwner;updatedClients++;
+     updatedClients++;
     }
-    const contractPayload={client_id:client.id,contract_number:refPart.trim(),current_stage:stage,work_address:address!==null&&address!==undefined&&String(address).trim()?String(address).trim():null,office_name:office||null,contract_value:value,trello_url:trelloUrl};
-    const {data:newContract,error}=await db.from('contracts').insert(contractPayload).select('id,contract_number,client_id,work_address,office_name,contract_value,clients(name,portfolio_owner)').single();
-    if(error)throw new Error(`Erro ao criar contrato ${refPart} de ${clientName}: ${error.message}`);
-    contractsCache.push(newContract);createdContracts++;
    }
   }
   await loadContracts();
-  const summary=`Atualização concluída: ${matchedLists} contrato(s) existente(s) relacionado(s), ${updatedContracts} contrato(s) atualizado(s), ${createdClients} cliente(s) criado(s), ${createdContracts} contrato(s) criado(s), ${updatedClients} gestora(s) atualizada(s)${skipped?`, ${skipped} ocorrência(s) não processada(s)`:''}.`;
-  $('listMsg').textContent=issues.length?summary+' Atenção: '+issues.join(' · '):summary;
+  const summary=`Atualização concluída: ${matchedLists} registro(s) relacionado(s), ${updatedContracts} contrato(s) atualizado(s), ${updatedClients} gestora(s) atualizada(s)${skipped?`, ${skipped} sem correspondência`:''}.`;
+  const uniqueIssues=[...new Set(issues)];
+  $('listMsg').textContent=uniqueIssues.length?summary+' Atenção: '+uniqueIssues.join(' · '):summary;
  }catch(err){$('listMsg').textContent='Falha na atualização automática: '+(err.message||String(err));await loadContracts();$('listMsg').textContent='Falha na atualização automática: '+(err.message||String(err))}
  finally{button.disabled=false;button.textContent='Atualizar carteira'}
 }
-
 function sourceSellerFromQueueRows(queueRows, contract){
- const contractNumber=normalizedContractKey(contract.contract_number);
+ const contractNumber=normalizedText(contract.contract_number);
  const clientName=normalizedText(contract.clients?.name);
  for(const row of (queueRows||[])){
   const extracted=parseJsonObject(row.extracted_data);
   const trello=parseJsonObject(extracted.trello);
   const refs=referenceTokens(extracted.manual?.contract_references??trello.contract_references??row.contract_references??[]);
   const rowClient=normalizedText(extracted.manual?.client_name??trello.client_name??row.client_name??'');
-  if((contractNumber&&refs.has(contractNumber))||(clientName&&rowClient===clientName)){ 
+  if((contractNumber&&refs.has(contractNumber))||(clientName&&rowClient===clientName)){
    return trello.source_seller||null;
   }
  }
@@ -397,59 +357,13 @@ async function syncTrelloBoards(){
  }
 }
 
-function buildPurchaseRows(contractRows,queueRows){
- const assigned=new Set();
- const purchases=[];
- for(const row of (queueRows||[])){
-  const extracted=parseJsonObject(row.extracted_data);
-  const trello=parseJsonObject(extracted.trello);
-  const manual=parseJsonObject(extracted.manual);
-  const name=manual.client_name||trello.client_name||row.client_name||'';
-  const refs=contractReferenceParts(manual.contract_references??trello.contract_references??row.contract_references??[]);
-  const refKeys=new Set(refs.map(normalizedContractKey));
-  if(!refKeys.size)continue;
-  const matches=(contractRows||[]).filter(c=>{
-   if(assigned.has(c.id))return false;
-   const cName=normalizedText(c.clients?.name);
-   if(normalizedText(name)!==cName)return false;
-   return contractReferenceParts(c.contract_number).some(part=>refKeys.has(normalizedContractKey(part)));
-  });
-  if(!matches.length)continue;
-  const clientIds=[...new Set(matches.map(c=>c.client_id).filter(Boolean))];
-  if(clientIds.length>1)continue;
-  matches.forEach(c=>assigned.add(c.id));
-  const primary=matches[0];
-  const firstValue=field=>matches.map(c=>c[field]).find(v=>v!==null&&v!==undefined&&v!=='')??null;
-  const seller=trello.source_seller||matches.map(c=>c.source_seller).find(Boolean)||null;
-  purchases.push({...primary,
-   contract_number:refs.join(' / '),
-   work_address:firstValue('work_address'),
-   trello_url:firstValue('trello_url')||trello.trello_url||trello.url||trello.list_url||trello.source_list_url||null,
-   current_stage:matches.find(c=>c.current_stage)?.current_stage||primary.current_stage,
-   office_name:firstValue('office_name'),
-   contract_value:firstValue('contract_value'),
-   inspection_date:firstValue('inspection_date'),
-   warranty_certificate_attached_at:firstValue('warranty_certificate_attached_at'),
-   pcp_completed:matches.some(c=>c.pcp_completed),
-   contract_notes:firstValue('contract_notes'),
-   source_seller:seller,
-   _purchaseIds:matches.map(c=>c.id)
-  });
- }
- for(const c of (contractRows||[])){
-  if(!assigned.has(c.id))purchases.push({...c,_purchaseIds:[c.id]});
- }
- return purchases;
-}
-
 async function loadContracts(){
 $('rows').innerHTML='<tr><td colspan="13">Carregando...</td></tr>';
 const {data,error}=await db.from('contracts').select('id,client_id,contract_number,work_address,trello_url,current_stage,assembly_completed_at,assembly_started_at,office_name,contract_value,inspection_date,pcp_completed,warranty_certificate_attached_at,contract_notes,clients(name,portfolio_owner)').order('created_at',{ascending:false});
 if(error){$('rows').innerHTML='<tr><td colspan="13">Não foi possível carregar os contratos.</td></tr>';$('listMsg').textContent=error.message;return}
 const {data:queueRows,error:queueError}=await db.from('trello_list_import_queue').select('client_name,contract_references,extracted_data,source_list_name').order('updated_at',{ascending:false});
 if(queueError){$('listMsg').textContent='Contratos carregados, mas não foi possível identificar vendedores: '+queueError.message;}
-const enriched=(data||[]).map(c=>({...c,source_seller:sourceSellerFromQueueRows(queueRows||[],c)}));
-const allData=buildPurchaseRows(enriched,queueRows||[]);
+const allData=(data||[]).map(c=>({...c,source_seller:sourceSellerFromQueueRows(queueRows||[],c)}));
 renderDashboard(allData);
 const stageOrder={'Comercial':1,'Engenharia':2,'Pós-vendas':3,'Montagem':4,'Finalização':5};
 const visibleData=(currentOwner==='todos'?allData:allData.filter(c=>c.clients?.portfolio_owner===currentOwner)).slice().sort((a,b)=>{
@@ -467,7 +381,7 @@ $('rows').innerHTML=visibleData.map(c=>`<tr>
 <td>${daysInPortfolio(c.assembly_started_at)}</td><td>${money(c.contract_value)}</td><td>${esc(c.office_name||'—')}</td>
 <td>${formatDate(c.inspection_date)}</td><td>${formatDate(c.warranty_certificate_attached_at)}</td>
 <td>${c.pcp_completed?'Concluído':'Pendente'}</td><td class="obs-cell">${esc(c.contract_notes||'—')}</td>
-<td><div class="row-actions"><button data-edit-contract="${esc(c.id)}">Editar</button>${(c._purchaseIds||[]).length>1?'<span class="muted">Compra agrupada</span>':`<button class="danger" data-delete-contract="${esc(c.id)}">Excluir</button>`}</div></td>
+<td><div class="row-actions"><button data-edit-contract="${esc(c.id)}">Editar</button><button class="danger" data-delete-contract="${esc(c.id)}">Excluir</button></div></td>
 </tr>${expandedContractId===c.id?`<tr class="detail-row"><td colspan="13"><div id="timeline-${esc(c.id)}">Carregando linha do tempo...</div></td></tr>`:''}`).join('');
 $('listMsg').textContent=`${visibleData.length} contrato(s) · ${new Set(visibleData.map(c=>c.client_id).filter(Boolean)).size} cliente(s) único(s)`;
 document.querySelectorAll('[data-open-contract]').forEach(b=>b.addEventListener('click',()=>toggleTimeline(b.dataset.openContract)));
