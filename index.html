@@ -200,7 +200,12 @@ function renderDashboard(data){
  $('dashVitoriaAssembly').textContent=countClients('Vitória','Montagem');
  $('dashVitoriaFinalization').textContent=countClients('Vitória','Finalização');
 }
-function normalizedText(v){return String(v??'').trim().toLocaleLowerCase('pt-BR')}
+function normalizedText(v){
+ return String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLocaleLowerCase('pt-BR').replace(/\s+/g,' ');
+}
+function normalizedContractKey(v){
+ return String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('pt-BR').replace(/[^a-z0-9]/g,'');
+}
 function validStage(v){return ['Comercial','Engenharia','Pós-vendas','Montagem','Finalização'].includes(v)?v:null}
 function resolveQueueStage(t){
  const detected=[...new Set((Array.isArray(t.detected_stages)?t.detected_stages:[]).map(validStage).filter(Boolean))];
@@ -249,11 +254,15 @@ function referenceTokens(value){
  raw.forEach(item=>{
   const str=String(item??'').trim();
   if(!str)return;
-  out.add(normalizedText(str));
-  str.split(/[|;,/]+/).map(x=>x.trim()).filter(Boolean).forEach(x=>out.add(normalizedText(x)));
+  const parts=str.split(/[|;,/]+/).map(x=>x.trim()).filter(Boolean);
+  [str,...parts].forEach(part=>{
+   const key=normalizedContractKey(part);
+   if(key)out.add(key);
+  });
  });
  return out;
 }
+
 async function syncQueueToContracts(){
  const button=$('refresh');button.disabled=true;button.textContent='Atualizando...';
  try{
@@ -271,11 +280,23 @@ async function syncQueueToContracts(){
    const clientName=manual.client_name||t.client_name||item.client_name||'';
    const refsRaw=manual.contract_references??t.contract_references??item.contract_references??[];
    const refs=referenceTokens(refsRaw);
-   let matched=(allContracts||[]).filter(c=>refs.has(normalizedText(c.contract_number)));
+   const byReference=(allContracts||[]).filter(c=>{
+    const contractKey=normalizedContractKey(c.contract_number);
+    return contractKey&&refs.has(contractKey);
+   });
+   let matched=byReference;
+   let matchMethod='referência';
    if(!matched.length&&clientName){
-    matched=(allContracts||[]).filter(c=>normalizedText(c.clients?.name)===normalizedText(clientName));
+    const byName=(allContracts||[]).filter(c=>normalizedText(c.clients?.name)===normalizedText(clientName));
+    if(byName.length===1){matched=byName;matchMethod='nome';}
+    else if(byName.length>1){
+     skipped++;issues.push(`${clientName}: nome corresponde a mais de um contrato; associação não realizada`);continue;
+    }
    }
-   if(!matched.length){skipped++;issues.push(`${clientName||item.source_list_name}: contrato não localizado`);continue}
+   if(!matched.length){skipped++;issues.push(`${clientName||item.source_list_name}: referência não localizada`);continue}
+   if(matched.length>1){
+    skipped++;issues.push(`${clientName||item.source_list_name}: referência corresponde a mais de um contrato; associação não realizada`);continue;
+   }
    matchedLists++;
    const stages=[...new Set((Array.isArray(t.detected_stages)?t.detected_stages:[]).map(validStage).filter(Boolean))];
    const details=Array.isArray(t.card_stage_details)?t.card_stage_details:[];
@@ -321,14 +342,14 @@ async function syncQueueToContracts(){
  finally{button.disabled=false;button.textContent='Atualizar carteira'}
 }
 function sourceSellerFromQueueRows(queueRows, contract){
- const contractNumber=normalizedText(contract.contract_number);
+ const contractNumber=normalizedContractKey(contract.contract_number);
  const clientName=normalizedText(contract.clients?.name);
  for(const row of (queueRows||[])){
   const extracted=parseJsonObject(row.extracted_data);
   const trello=parseJsonObject(extracted.trello);
   const refs=referenceTokens(extracted.manual?.contract_references??trello.contract_references??row.contract_references??[]);
   const rowClient=normalizedText(extracted.manual?.client_name??trello.client_name??row.client_name??'');
-  if((contractNumber&&refs.has(contractNumber))||(clientName&&rowClient===clientName)){
+  if((contractNumber&&refs.has(contractNumber))||(clientName&&rowClient===clientName)){ 
    return trello.source_seller||null;
   }
  }
