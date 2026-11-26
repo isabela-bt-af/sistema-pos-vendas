@@ -264,36 +264,40 @@ async function syncQueueToContracts(){
   if(cError)throw new Error('Não foi possível consultar os contratos: '+cError.message);
   let updatedContracts=0,updatedClients=0,matchedLists=0,skipped=0;
   const issues=[];
+  const addIssue=message=>{if(!issues.includes(message))issues.push(message)};
   for(const item of queue){
    const extracted=parseJsonObject(item.extracted_data);
    const t=parseJsonObject(extracted.trello);
    const manual=parseJsonObject(extracted.manual);
    const clientName=manual.client_name||t.client_name||item.client_name||'';
-   const refsRaw=manual.contract_references??t.contract_references??item.contract_references??[];
-   const refs=referenceTokens(refsRaw);
-   let matched=(allContracts||[]).filter(c=>refs.has(normalizedText(c.contract_number)));
-   if(!matched.length&&clientName){
-    matched=(allContracts||[]).filter(c=>normalizedText(c.clients?.name)===normalizedText(clientName));
+   // O número do contrato não é usado como chave de associação.
+   // Primeiro localiza pelo nome exato; se houver mais de um contrato para o cliente,
+   // usa o valor do contrato para distinguir a compra.
+   const value=numericValue(manual.contract_value??t.contract_value);
+   const sameClient=(allContracts||[]).filter(c=>normalizedText(c.clients?.name)===normalizedText(clientName));
+   let matched=sameClient;
+   if(sameClient.length>1){
+    if(value===null){skipped++;addIssue(`${clientName||item.source_list_name}: mais de um contrato para o cliente e valor não identificado; associação não realizada`);continue}
+    const cents=n=>Math.round(Number(n)*100);
+    matched=sameClient.filter(c=>c.contract_value!==null&&c.contract_value!==undefined&&c.contract_value!==''&&cents(c.contract_value)===cents(value));
    }
-   if(!matched.length){skipped++;issues.push(`${clientName||item.source_list_name}: contrato não localizado`);continue}
-   if(matched.length>1){
+   if(matched.length!==1){
     skipped++;
-    issues.push(`${clientName||item.source_list_name}: número de contrato duplicado no sistema; associação não realizada`);
+    addIssue(`${clientName||item.source_list_name}: ${matched.length>1?'mais de um registro com o mesmo nome e valor':'cliente/valor não localizado de forma única'}; associação não realizada`);
     continue;
    }
    matchedLists++;
    const stages=[...new Set((Array.isArray(t.detected_stages)?t.detected_stages:[]).map(validStage).filter(Boolean))];
    const details=Array.isArray(t.card_stage_details)?t.card_stage_details:[];
    const stage=resolveQueueStage(t);
-   if(stages.length>1)issues.push(`${clientName}: mais de uma etapa identificada; etapa preservada`);
+   if(stages.length>1)addIssue(`${clientName}: mais de uma etapa identificada; etapa preservada`);
    const postSalesCards=details.filter(x=>x.is_post_sales_card===true);
    const owners=[...new Set(postSalesCards.map(x=>validOwner(x.portfolio_owner)).filter(Boolean))];
    const ownerCanBeSet=postSalesCards.length>0&&owners.length<=1;
-   if(postSalesCards.length&&owners.length>1)issues.push(`${clientName}: mais de uma gestora nos cartões de Pós-vendas; gestora preservada`);
+   if(postSalesCards.length&&owners.length>1)addIssue(`${clientName}: mais de uma gestora nos cartões de Pós-vendas; gestora preservada`);
    const address=manual.work_address??t.work_address;
    const trelloOffice=t.office_name;
    const office=Object.prototype.hasOwnProperty.call(manual,'office_name')&&manual.office_name?String(manual.office_name).trim():cleanOfficeName(trelloOffice);
-   const value=numericValue(manual.contract_value??t.contract_value);
    for(const c of matched){
     const contractPatch={};
     if(stage)contractPatch.current_stage=stage;
@@ -321,20 +325,20 @@ async function syncQueueToContracts(){
   }
   await loadContracts();
   const summary=`Atualização concluída: ${matchedLists} registro(s) relacionado(s), ${updatedContracts} contrato(s) atualizado(s), ${updatedClients} gestora(s) atualizada(s)${skipped?`, ${skipped} sem correspondência`:''}.`;
-  const uniqueIssues=[...new Set(issues)];
-  $('listMsg').textContent=uniqueIssues.length?summary+' Atenção: '+uniqueIssues.join(' · '):summary;
+  $('listMsg').textContent=issues.length?summary+' Atenção: '+issues.join(' · '):summary;
  }catch(err){$('listMsg').textContent='Falha na atualização automática: '+(err.message||String(err));await loadContracts();$('listMsg').textContent='Falha na atualização automática: '+(err.message||String(err))}
  finally{button.disabled=false;button.textContent='Atualizar carteira'}
 }
 function sourceSellerFromQueueRows(queueRows, contract){
- const contractNumber=normalizedText(contract.contract_number);
  const clientName=normalizedText(contract.clients?.name);
+ const contractValue=numericValue(contract.contract_value);
+ const cents=n=>n===null?null:Math.round(Number(n)*100);
  for(const row of (queueRows||[])){
   const extracted=parseJsonObject(row.extracted_data);
   const trello=parseJsonObject(extracted.trello);
-  const refs=referenceTokens(extracted.manual?.contract_references??trello.contract_references??row.contract_references??[]);
   const rowClient=normalizedText(extracted.manual?.client_name??trello.client_name??row.client_name??'');
-  if((contractNumber&&refs.has(contractNumber))||(clientName&&rowClient===clientName)){
+  const rowValue=numericValue(extracted.manual?.contract_value??trello.contract_value);
+  if(clientName&&rowClient===clientName&&contractValue!==null&&rowValue!==null&&cents(contractValue)===cents(rowValue)){
    return trello.source_seller||null;
   }
  }
