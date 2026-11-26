@@ -339,7 +339,7 @@ async function syncTrelloBoards(){
  const button=$('syncTrello');
  button.disabled=true;button.textContent='Sincronizando...';
  try{
-  const {data,error}=await db.functions.invoke('trello-contract-preview',{body:{}});
+  const {data,error}=await db.functions.invoke('trello-contract-preview-',{body:{}});
   if(error)throw new Error(error.message||'Falha ao executar a sincronização dos quadros.');
   if(data?.success===false)throw new Error(data.error||'A sincronização não foi concluída.');
   await syncQueueToContracts();
