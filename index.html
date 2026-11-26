@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
+<meta name="application-version" content="V20">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Bontempo | Gestão Integrada de Pós-vendas</title>
@@ -319,7 +320,7 @@ async function syncQueueToContracts(){
 
    for(const refPart of refParts){
     const key=normalizedContractKey(refPart);
-    const existing=contractsCache.filter(c=>normalizedContractKey(c.contract_number)===key);
+    const existing=contractsCache.filter(c=>contractReferenceParts(c.contract_number).some(part=>normalizedContractKey(part)===key));
     if(existing.length>1){skipped++;issues.push(`${clientName} (${refPart}): número de contrato duplicado no sistema; associação não realizada`);continue;}
     if(existing.length===1){
      const c=existing[0];
@@ -329,6 +330,7 @@ async function syncQueueToContracts(){
      matchedLists++;
      const patch={};
      if(stage)patch.current_stage=stage;
+     if(!c.trello_url&&trelloUrl)patch.trello_url=trelloUrl;
      if(!c.work_address&&address!==null&&address!==undefined&&String(address).trim())patch.work_address=String(address).trim();
      if(!c.office_name&&office)patch.office_name=office;
      else if(c.office_name&&trelloOffice&&String(c.office_name).trim()===String(trelloOffice).trim()&&office&&office!==String(c.office_name).trim())patch.office_name=office;
@@ -395,13 +397,59 @@ async function syncTrelloBoards(){
  }
 }
 
+function buildPurchaseRows(contractRows,queueRows){
+ const assigned=new Set();
+ const purchases=[];
+ for(const row of (queueRows||[])){
+  const extracted=parseJsonObject(row.extracted_data);
+  const trello=parseJsonObject(extracted.trello);
+  const manual=parseJsonObject(extracted.manual);
+  const name=manual.client_name||trello.client_name||row.client_name||'';
+  const refs=contractReferenceParts(manual.contract_references??trello.contract_references??row.contract_references??[]);
+  const refKeys=new Set(refs.map(normalizedContractKey));
+  if(!refKeys.size)continue;
+  const matches=(contractRows||[]).filter(c=>{
+   if(assigned.has(c.id))return false;
+   const cName=normalizedText(c.clients?.name);
+   if(normalizedText(name)!==cName)return false;
+   return contractReferenceParts(c.contract_number).some(part=>refKeys.has(normalizedContractKey(part)));
+  });
+  if(!matches.length)continue;
+  const clientIds=[...new Set(matches.map(c=>c.client_id).filter(Boolean))];
+  if(clientIds.length>1)continue;
+  matches.forEach(c=>assigned.add(c.id));
+  const primary=matches[0];
+  const firstValue=field=>matches.map(c=>c[field]).find(v=>v!==null&&v!==undefined&&v!=='')??null;
+  const seller=trello.source_seller||matches.map(c=>c.source_seller).find(Boolean)||null;
+  purchases.push({...primary,
+   contract_number:refs.join(' / '),
+   work_address:firstValue('work_address'),
+   trello_url:firstValue('trello_url')||trello.trello_url||trello.url||trello.list_url||trello.source_list_url||null,
+   current_stage:matches.find(c=>c.current_stage)?.current_stage||primary.current_stage,
+   office_name:firstValue('office_name'),
+   contract_value:firstValue('contract_value'),
+   inspection_date:firstValue('inspection_date'),
+   warranty_certificate_attached_at:firstValue('warranty_certificate_attached_at'),
+   pcp_completed:matches.some(c=>c.pcp_completed),
+   contract_notes:firstValue('contract_notes'),
+   source_seller:seller,
+   _purchaseIds:matches.map(c=>c.id)
+  });
+ }
+ for(const c of (contractRows||[])){
+  if(!assigned.has(c.id))purchases.push({...c,_purchaseIds:[c.id]});
+ }
+ return purchases;
+}
+
 async function loadContracts(){
 $('rows').innerHTML='<tr><td colspan="13">Carregando...</td></tr>';
 const {data,error}=await db.from('contracts').select('id,client_id,contract_number,work_address,trello_url,current_stage,assembly_completed_at,assembly_started_at,office_name,contract_value,inspection_date,pcp_completed,warranty_certificate_attached_at,contract_notes,clients(name,portfolio_owner)').order('created_at',{ascending:false});
 if(error){$('rows').innerHTML='<tr><td colspan="13">Não foi possível carregar os contratos.</td></tr>';$('listMsg').textContent=error.message;return}
 const {data:queueRows,error:queueError}=await db.from('trello_list_import_queue').select('client_name,contract_references,extracted_data,source_list_name').order('updated_at',{ascending:false});
 if(queueError){$('listMsg').textContent='Contratos carregados, mas não foi possível identificar vendedores: '+queueError.message;}
-const allData=(data||[]).map(c=>({...c,source_seller:sourceSellerFromQueueRows(queueRows||[],c)}));
+const enriched=(data||[]).map(c=>({...c,source_seller:sourceSellerFromQueueRows(queueRows||[],c)}));
+const allData=buildPurchaseRows(enriched,queueRows||[]);
 renderDashboard(allData);
 const stageOrder={'Comercial':1,'Engenharia':2,'Pós-vendas':3,'Montagem':4,'Finalização':5};
 const visibleData=(currentOwner==='todos'?allData:allData.filter(c=>c.clients?.portfolio_owner===currentOwner)).slice().sort((a,b)=>{
@@ -419,7 +467,7 @@ $('rows').innerHTML=visibleData.map(c=>`<tr>
 <td>${daysInPortfolio(c.assembly_started_at)}</td><td>${money(c.contract_value)}</td><td>${esc(c.office_name||'—')}</td>
 <td>${formatDate(c.inspection_date)}</td><td>${formatDate(c.warranty_certificate_attached_at)}</td>
 <td>${c.pcp_completed?'Concluído':'Pendente'}</td><td class="obs-cell">${esc(c.contract_notes||'—')}</td>
-<td><div class="row-actions"><button data-edit-contract="${esc(c.id)}">Editar</button><button class="danger" data-delete-contract="${esc(c.id)}">Excluir</button></div></td>
+<td><div class="row-actions"><button data-edit-contract="${esc(c.id)}">Editar</button>${(c._purchaseIds||[]).length>1?'<span class="muted">Compra agrupada</span>':`<button class="danger" data-delete-contract="${esc(c.id)}">Excluir</button>`}</div></td>
 </tr>${expandedContractId===c.id?`<tr class="detail-row"><td colspan="13"><div id="timeline-${esc(c.id)}">Carregando linha do tempo...</div></td></tr>`:''}`).join('');
 $('listMsg').textContent=`${visibleData.length} contrato(s) · ${new Set(visibleData.map(c=>c.client_id).filter(Boolean)).size} cliente(s) único(s)`;
 document.querySelectorAll('[data-open-contract]').forEach(b=>b.addEventListener('click',()=>toggleTimeline(b.dataset.openContract)));
