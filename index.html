@@ -263,6 +263,18 @@ function referenceTokens(value){
  return out;
 }
 
+function contractReferenceParts(value){
+ const raw=Array.isArray(value)?value:[value];
+ const parts=[];
+ raw.forEach(item=>{
+  String(item??'').split(/[|;,/]+/).map(x=>x.trim()).filter(Boolean).forEach(part=>{
+   const key=normalizedContractKey(part);
+   if(key&&!parts.some(x=>normalizedContractKey(x)===key))parts.push(part);
+  });
+ });
+ return parts;
+}
+
 async function syncQueueToContracts(){
  const button=$('refresh');button.disabled=true;button.textContent='Atualizando...';
  try{
@@ -271,76 +283,87 @@ async function syncQueueToContracts(){
   if(!queue?.length){$('listMsg').textContent='Nenhum dado sincronizado do Trello para aplicar.';await loadContracts();return}
   const {data:allContracts,error:cError}=await db.from('contracts').select('id,contract_number,client_id,work_address,office_name,contract_value,clients(name,portfolio_owner)');
   if(cError)throw new Error('Não foi possível consultar os contratos: '+cError.message);
-  let updatedContracts=0,updatedClients=0,matchedLists=0,skipped=0;
+  const {data:allClients,error:clError}=await db.from('clients').select('id,name,portfolio_owner');
+  if(clError)throw new Error('Não foi possível consultar os clientes: '+clError.message);
+  let updatedContracts=0,createdContracts=0,createdClients=0,updatedClients=0,matchedLists=0,skipped=0;
   const issues=[];
+    const clientsCache=[...(allClients||[])];
+  const contractsCache=[...(allContracts||[])];
   for(const item of queue){
    const extracted=parseJsonObject(item.extracted_data);
    const t=parseJsonObject(extracted.trello);
    const manual=parseJsonObject(extracted.manual);
-   const clientName=manual.client_name||t.client_name||item.client_name||'';
+   const clientName=String(manual.client_name||t.client_name||item.client_name||'').trim();
    const refsRaw=manual.contract_references??t.contract_references??item.contract_references??[];
-   const refs=referenceTokens(refsRaw);
-   const byReference=(allContracts||[]).filter(c=>{
-    const contractKey=normalizedContractKey(c.contract_number);
-    return contractKey&&refs.has(contractKey);
-   });
-   let matched=byReference;
-   let matchMethod='referência';
-   if(!matched.length&&clientName){
-    const byName=(allContracts||[]).filter(c=>normalizedText(c.clients?.name)===normalizedText(clientName));
-    if(byName.length===1){matched=byName;matchMethod='nome';}
-    else if(byName.length>1){
-     skipped++;issues.push(`${clientName}: nome corresponde a mais de um contrato; associação não realizada`);continue;
-    }
-   }
-   if(!matched.length){skipped++;issues.push(`${clientName||item.source_list_name}: referência não localizada`);continue}
-   if(matched.length>1){
-    skipped++;issues.push(`${clientName||item.source_list_name}: referência corresponde a mais de um contrato; associação não realizada`);continue;
-   }
-   matchedLists++;
-   const stages=[...new Set((Array.isArray(t.detected_stages)?t.detected_stages:[]).map(validStage).filter(Boolean))];
+   const refParts=contractReferenceParts(refsRaw);
+   if(!clientName||!refParts.length){skipped++;issues.push(`${clientName||item.source_list_name}: nome ou número de contrato ausente; cadastro não criado`);continue;}
+
+   const matchingClients=clientsCache.filter(c=>normalizedText(c.name)===normalizedText(clientName));
+   let client=matchingClients.length===1?matchingClients[0]:null;
+   if(matchingClients.length>1){skipped++;issues.push(`${clientName}: há mais de um cadastro de cliente com esse nome; novos contratos não criados`);continue;}
+
    const details=Array.isArray(t.card_stage_details)?t.card_stage_details:[];
    const stage=resolveQueueStage(t);
-   if(stages.length>1)issues.push(`${clientName}: mais de uma etapa identificada; etapa preservada`);
+   const stages=[...new Set((Array.isArray(t.detected_stages)?t.detected_stages:[]).map(validStage).filter(Boolean))];
+   if(stages.length>1)issues.push(`${clientName}: mais de uma etapa identificada; etapa não aplicada aos novos contratos`);
    const postSalesCards=details.filter(x=>x.is_post_sales_card===true);
    const owners=[...new Set(postSalesCards.map(x=>validOwner(x.portfolio_owner)).filter(Boolean))];
    const ownerCanBeSet=postSalesCards.length>0&&owners.length<=1;
    if(postSalesCards.length&&owners.length>1)issues.push(`${clientName}: mais de uma gestora nos cartões de Pós-vendas; gestora preservada`);
+   const desiredOwner=ownerCanBeSet?(owners[0]||null):null;
    const address=manual.work_address??t.work_address;
    const trelloOffice=t.office_name;
    const office=Object.prototype.hasOwnProperty.call(manual,'office_name')&&manual.office_name?String(manual.office_name).trim():cleanOfficeName(trelloOffice);
    const value=numericValue(manual.contract_value??t.contract_value);
-   for(const c of matched){
-    const contractPatch={};
-    if(stage)contractPatch.current_stage=stage;
-    if(!c.work_address&&address!==null&&address!==undefined&&String(address).trim())contractPatch.work_address=String(address).trim();
-    if(!c.office_name&&office)contractPatch.office_name=office;
-    else if(c.office_name&&trelloOffice&&String(c.office_name).trim()===String(trelloOffice).trim()&&office&&office!==String(c.office_name).trim())contractPatch.office_name=office;
-    if((c.contract_value===null||c.contract_value===undefined||c.contract_value==='')&&value!==null)contractPatch.contract_value=value;
-    if(Object.keys(contractPatch).length){
-     const {error}=await db.from('contracts').update(contractPatch).eq('id',c.id);
-     if(error)throw new Error(`Erro ao atualizar contrato ${c.contract_number}: ${error.message}`);
-     updatedContracts++;
+   const trelloUrl=t.trello_url||t.url||null;
+
+   for(const refPart of refParts){
+    const key=normalizedContractKey(refPart);
+    const existing=contractsCache.filter(c=>normalizedContractKey(c.contract_number)===key);
+    if(existing.length>1){skipped++;issues.push(`${clientName} (${refPart}): número de contrato duplicado no sistema; associação não realizada`);continue;}
+    if(existing.length===1){
+     const c=existing[0];
+     if(normalizedText(c.clients?.name)!==normalizedText(clientName)){
+      skipped++;issues.push(`${clientName} (${refPart}): número já vinculado a outro cliente (${c.clients?.name||'sem nome'}); nenhuma alteração realizada`);continue;
+     }
+     matchedLists++;
+     const patch={};
+     if(stage)patch.current_stage=stage;
+     if(!c.work_address&&address!==null&&address!==undefined&&String(address).trim())patch.work_address=String(address).trim();
+     if(!c.office_name&&office)patch.office_name=office;
+     else if(c.office_name&&trelloOffice&&String(c.office_name).trim()===String(trelloOffice).trim()&&office&&office!==String(c.office_name).trim())patch.office_name=office;
+     if((c.contract_value===null||c.contract_value===undefined||c.contract_value==='')&&value!==null)patch.contract_value=value;
+     if(Object.keys(patch).length){const {error}=await db.from('contracts').update(patch).eq('id',c.id);if(error)throw new Error(`Erro ao atualizar contrato ${c.contract_number}: ${error.message}`);Object.assign(c,patch);updatedContracts++;}
+     if(ownerCanBeSet&&c.client_id){
+      const current=clientsCache.find(x=>x.id===c.client_id)?.portfolio_owner??c.clients?.portfolio_owner??null;
+      if(current!==desiredOwner){const {error}=await db.from('clients').update({portfolio_owner:desiredOwner}).eq('id',c.client_id);if(error)throw new Error(`Erro ao atualizar gestora de ${clientName}: ${error.message}`);const cached=clientsCache.find(x=>x.id===c.client_id);if(cached)cached.portfolio_owner=desiredOwner;if(c.clients)c.clients.portfolio_owner=desiredOwner;updatedClients++;}
+     }
+     continue;
     }
-   }
-   if(ownerCanBeSet){
-    const clientIds=[...new Set(matched.map(c=>c.client_id).filter(Boolean))];
-    for(const clientId of clientIds){
-     const desiredOwner=owners[0]||null;
-     const current=(allContracts||[]).find(c=>c.client_id===clientId)?.clients?.portfolio_owner??null;
-     if(current===desiredOwner)continue;
-     const {error}=await db.from('clients').update({portfolio_owner:desiredOwner}).eq('id',clientId);
+
+    if(!client){
+     const payload={name:clientName,portfolio_owner:desiredOwner};
+     const {data:newClient,error}=await db.from('clients').insert(payload).select('id,name,portfolio_owner').single();
+     if(error)throw new Error(`Erro ao criar cliente ${clientName}: ${error.message}`);
+     client=newClient;clientsCache.push(client);createdClients++;
+    }else if(ownerCanBeSet&&client.portfolio_owner!==desiredOwner){
+     const {error}=await db.from('clients').update({portfolio_owner:desiredOwner}).eq('id',client.id);
      if(error)throw new Error(`Erro ao atualizar gestora de ${clientName}: ${error.message}`);
-     updatedClients++;
+     client.portfolio_owner=desiredOwner;updatedClients++;
     }
+    const contractPayload={client_id:client.id,contract_number:refPart.trim(),current_stage:stage,work_address:address!==null&&address!==undefined&&String(address).trim()?String(address).trim():null,office_name:office||null,contract_value:value,trello_url:trelloUrl};
+    const {data:newContract,error}=await db.from('contracts').insert(contractPayload).select('id,contract_number,client_id,work_address,office_name,contract_value,clients(name,portfolio_owner)').single();
+    if(error)throw new Error(`Erro ao criar contrato ${refPart} de ${clientName}: ${error.message}`);
+    contractsCache.push(newContract);createdContracts++;
    }
   }
   await loadContracts();
-  const summary=`Atualização concluída: ${matchedLists} registro(s) relacionado(s), ${updatedContracts} contrato(s) atualizado(s), ${updatedClients} gestora(s) atualizada(s)${skipped?`, ${skipped} sem correspondência`:''}.`;
+  const summary=`Atualização concluída: ${matchedLists} contrato(s) existente(s) relacionado(s), ${updatedContracts} contrato(s) atualizado(s), ${createdClients} cliente(s) criado(s), ${createdContracts} contrato(s) criado(s), ${updatedClients} gestora(s) atualizada(s)${skipped?`, ${skipped} ocorrência(s) não processada(s)`:''}.`;
   $('listMsg').textContent=issues.length?summary+' Atenção: '+issues.join(' · '):summary;
  }catch(err){$('listMsg').textContent='Falha na atualização automática: '+(err.message||String(err));await loadContracts();$('listMsg').textContent='Falha na atualização automática: '+(err.message||String(err))}
  finally{button.disabled=false;button.textContent='Atualizar carteira'}
 }
+
 function sourceSellerFromQueueRows(queueRows, contract){
  const contractNumber=normalizedContractKey(contract.contract_number);
  const clientName=normalizedText(contract.clients?.name);
